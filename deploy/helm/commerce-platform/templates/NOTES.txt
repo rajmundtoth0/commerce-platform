@@ -1,0 +1,16 @@
+commerce-platform {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}".
+
+Image:     {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+Replicas:  {{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} (HPA){{ else }}{{ .Values.replicaCount }}{{ end }}
+{{ if .Values.migrations.enabled }}Alembic migrations ran as a pre-upgrade Job.{{ else }}Migrations Job is DISABLED — run `commerce migrate` yourself.{{ end }}
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "commerce-platform.fullname" . }}
+
+Port-forward and probe:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "commerce-platform.fullname" . }} 8000:{{ .Values.service.port }}
+  curl localhost:8000/health
+  curl localhost:8000/metrics
+
+Rebuild Redis projections from Postgres (read model is disposable):
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "commerce-platform.fullname" . }} -- commerce rebuild

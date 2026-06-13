@@ -1,0 +1,103 @@
+# Default values for commerce-platform.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/your-org/commerce-platform
+  tag: "0.1.0" # overridden per release (GitOps bumps this)
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Non-secret application configuration -> ConfigMap.
+env:
+  APP_ENV: production
+  LOG_LEVEL: INFO
+  SERVICE_NAME: commerce-platform
+  OTEL_EXPORTER_OTLP_ENDPOINT: "" # e.g. http://otel-collector:4317
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+
+# Postgres connection (source of truth).
+postgres:
+  # If `dsn` is set it is used verbatim (async driver required).
+  dsn: ""
+  # Otherwise the DSN is assembled from these parts.
+  host: postgres
+  port: 5432
+  database: commerce
+  user: commerce
+  # Password handling: provide inline (dev) OR reference an existing Secret.
+  password: commerce
+  existingSecret: ""
+  existingSecretPasswordKey: password
+
+# Redis connection (read projections).
+redis:
+  url: redis://redis:6379/0
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+# Container port the app listens on.
+containerPort: 8000
+
+# Run Alembic migrations as a pre-install/pre-upgrade Helm hook Job.
+migrations:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# Probes are wired to the app's liveness/readiness endpoints.
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Prometheus scrape annotations on the pods (/metrics).
+metrics:
+  enabled: true
+  path: /metrics
+
+podAnnotations: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
