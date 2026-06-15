@@ -1,0 +1,29 @@
+# prd — production. Manual sync (no automated block) so a human promotes
+# releases; pinned to an immutable git tag rather than a moving branch. Cluster
+# to be provisioned later.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: commerce-platform-prd
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/commerce-platform.git
+    targetRevision: v0.2.0 # promote by bumping this tag; no auto-sync in prd
+    path: deploy/helm/commerce-platform
+    helm:
+      releaseName: commerce
+      valueFiles:
+        - values.yaml
+        - values-prd.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: commerce-prd
+  syncPolicy:
+    # No `automated:` — production syncs are triggered manually/by a promotion.
+    syncOptions: [CreateNamespace=true, ApplyOutOfSyncOnly=true]
+    retry:
+      limit: 3
+      backoff: {duration: 15s, factor: 2, maxDuration: 5m}

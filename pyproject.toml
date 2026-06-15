@@ -1,31 +1,51 @@
 [project]
 name = "commerce-platform"
-version = "0.1.0"
-description = "Frontend-agnostic commerce API. Postgres is the source of truth; Redis holds versioned read projections."
+version = "0.2.0"
+description = "Service-oriented commerce platform. Postgres per service is the source of truth; Valkey holds versioned read projections; Celery rebuilds them."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Rajmund Toth" }]
 
+# This monorepo ships as a single Python distribution containing several
+# top-level packages (platform + one per service). Each service is still an
+# INDEPENDENT runtime unit: its own process, port, container, and Postgres
+# database. Packaging them together keeps dev/test/CI simple; production could
+# split them into separate wheels without changing the runtime boundaries.
 dependencies = [
+    # web
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    "httpx>=0.28",
+    "python-multipart>=0.0.12",
+    # data
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
+    "psycopg[binary]>=3.2",           # sync driver for Alembic + Celery worker
     "alembic>=1.14",
-    "redis>=5.2",
     "pydantic[email]>=2.10",
     "pydantic-settings>=2.6",
+    # valkey (redis-compatible) + tasks
+    "redis>=5.2",
+    "celery>=5.4",
+    "flower>=2.0",
+    # auth
+    "pyjwt>=2.10",
+    "bcrypt>=4.2",
+    # admin
+    "sqladmin>=0.20",
+    "itsdangerous>=2.2",              # SQLAdmin session auth
+    # observability
     "structlog>=24.4",
     "prometheus-client>=0.21",
     "typer>=0.15",
-    # OpenTelemetry — instrumentation is wired but exporter is optional at runtime.
     "opentelemetry-api>=1.29",
     "opentelemetry-sdk>=1.29",
     "opentelemetry-exporter-otlp-proto-grpc>=1.29",
     "opentelemetry-instrumentation-fastapi>=0.50b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.50b0",
     "opentelemetry-instrumentation-redis>=0.50b0",
+    "opentelemetry-instrumentation-celery>=0.50b0",
 ]
 
 [project.optional-dependencies]
@@ -33,7 +53,6 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
-    "httpx>=0.28",
     "aiosqlite>=0.20",
     "fakeredis>=2.26",
     "ruff>=0.8",
@@ -41,60 +60,61 @@ dev = [
 ]
 
 [project.scripts]
-commerce = "app.cli.main:app"
+# Operational CLIs (projection rebuilds, etc.) live per service but share a name space.
+platform-admin = "cplatform.cli:app"
 
 [build-system]
 requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
+# Each service package lives under its own app directory; the shared lib under libs/.
 [tool.setuptools.packages.find]
-include = ["app*"]
+where = [
+    "libs/platform",
+    "apps/auth-api",
+    "apps/orders-api",
+    "apps/backoffice-api",
+    "apps/webshop-api",
+    "apps/worker",
+]
+# alembic/ dirs are migration scripts, not importable packages.
+exclude = ["alembic", "alembic.*"]
 
 # ---------------------------------------------------------------------------
-# Ruff — linter + formatter
+# Ruff
 # ---------------------------------------------------------------------------
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["app", "tests"]
+src = ["libs/platform", "apps", "tests"]
+extend-exclude = ["apps/webshop-ui", "**/alembic/versions"]
 
 [tool.ruff.lint]
-select = [
-    "E", "W",   # pycodestyle
-    "F",        # pyflakes
-    "I",        # isort
-    "B",        # flake8-bugbear
-    "C4",       # comprehensions
-    "UP",       # pyupgrade
-    "ASYNC",    # flake8-async
-    "RUF",      # ruff-specific
-]
-ignore = [
-    "B008",  # FastAPI uses function calls (Depends) in argument defaults by design.
-]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "ASYNC", "RUF"]
+ignore = ["B008"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]
-"alembic/*" = ["E501"]
+"**/alembic/*" = ["E501"]
+# SQLAdmin ModelView config attributes are framework-declared class lists.
+"**/admin.py" = ["RUF012"]
 
 # ---------------------------------------------------------------------------
-# mypy — static type checking
+# mypy
 # ---------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-exclude = ['^alembic/']
 warn_unused_ignores = true
-warn_redundant_casts = true
 disallow_untyped_defs = true
 ignore_missing_imports = true
+explicit_package_bases = true
+mypy_path = "libs/platform:apps/auth-api:apps/orders-api:apps/backoffice-api:apps/webshop-api:apps/worker"
+exclude = ['/alembic/', 'apps/webshop-ui']
 
-# Application code is type-checked under --strict. Tests and migrations are
-# exercised by the test suite / Alembic itself, so we don't impose strict typing
-# on their internals (idiomatic: strict types on the library, not the fixtures).
 [[tool.mypy.overrides]]
-module = ["tests.*", "alembic.*"]
+module = ["tests.*"]
 ignore_errors = true
 
 # ---------------------------------------------------------------------------
@@ -103,8 +123,5 @@ ignore_errors = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-q --cov=app --cov-report=term-missing"
+addopts = "-q"
 filterwarnings = ["ignore::DeprecationWarning"]
-
-[tool.coverage.run]
-omit = ["app/cli/*", "alembic/*"]

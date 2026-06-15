@@ -1,0 +1,38 @@
+# prd — production (cluster to be provisioned). Managed Postgres + Valkey,
+# secrets out-of-band, tracing on, higher replicas, Flower disabled (internal
+# tooling is exposed separately, not as a public-ish service). Images are pinned
+# to an immutable release tag rather than a moving environment tag.
+global:
+  image:
+    pyRepository: ghcr.io/your-org/commerce-platform-py
+    pyTag: "0.2.0" # pin to an immutable release; bumped by the release pipeline
+    uiRepository: ghcr.io/your-org/commerce-platform-ui
+    uiTag: "0.2.0"
+    pullPolicy: IfNotPresent
+  jwtExistingSecret: commerce-jwt
+  postgres:
+    host: postgres.commerce-prd.svc.cluster.local
+    existingSecret: commerce-postgres
+  valkey:
+    url: redis://valkey.commerce-prd.svc.cluster.local:6379/0
+    brokerUrl: redis://valkey.commerce-prd.svc.cluster.local:6379/1
+    resultBackend: redis://valkey.commerce-prd.svc.cluster.local:6379/2
+  otelEndpoint: http://otel-collector.observability:4317
+
+postgres:
+  enabled: false
+valkey:
+  enabled: false
+
+migrations:
+  enabled: true
+
+services:
+  auth-api: {replicas: 2}
+  backoffice-api: {replicas: 2}
+  orders-api: {replicas: 3}
+  webshop-api: {replicas: 3}
+  worker: {replicas: 3}
+  beat: {replicas: 1} # exactly one scheduler
+  flower: {enabled: false}
+  webshop-ui: {replicas: 3}

@@ -1,66 +1,176 @@
-# Local development stack: Postgres + Redis + the API.
-# The `migrate` one-shot runs Alembic before the API starts.
+# Local development stack for the whole platform.
 #
 #   docker compose up --build
-#   curl localhost:8000/health
+#   UI:        http://localhost:5173
+#   webshop:   http://localhost:8000/docs
+#   backoffice http://localhost:8001/docs  (SQLAdmin at /admin/db)
+#   auth:      http://localhost:8002/docs
+#   orders:    http://localhost:8003/docs
+#   flower:    http://localhost:5555
 #
 name: commerce-platform
 
+x-python-build: &python-build
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.python
+  image: commerce-platform-py:local
+
+x-common-env: &common-env
+  APP_ENV: local
+  LOG_LEVEL: INFO
+  JWT_SECRET: dev-secret-change-me-in-production-0123456789
+  VALKEY_URL: redis://valkey:6379/0
+  CELERY_BROKER_URL: redis://valkey:6379/1
+  CELERY_RESULT_BACKEND: redis://valkey:6379/2
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+
 services:
+  # --- Infrastructure ----------------------------------------------------
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: commerce
       POSTGRES_PASSWORD: commerce
       POSTGRES_DB: commerce
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U commerce"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 15
 
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 15
 
-  migrate:
-    build: .
-    command: ["migrate"]
+  # --- One-shot migrations (one per owning database) ---------------------
+  migrate-auth:
+    <<: *python-build
+    command: ["sh", "-c", "cd apps/auth-api && alembic upgrade head"]
     environment:
-      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/commerce
-      REDIS_URL: redis://redis:6379/0
+      <<: *common-env
+      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/auth
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres: {condition: service_healthy}
 
-  api:
-    build: .
+  migrate-orders:
+    <<: *python-build
+    command: ["sh", "-c", "cd apps/orders-api && alembic upgrade head"]
     environment:
-      APP_ENV: local
-      LOG_LEVEL: INFO
-      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/commerce
-      REDIS_URL: redis://redis:6379/0
-      OTEL_EXPORTER_OTLP_ENDPOINT: ""
-    ports:
-      - "8000:8000"
+      <<: *common-env
+      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
+      postgres: {condition: service_healthy}
+
+  migrate-backoffice:
+    <<: *python-build
+    command: ["sh", "-c", "cd apps/backoffice-api && alembic upgrade head"]
+    environment:
+      <<: *common-env
+      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # --- Services ----------------------------------------------------------
+  auth-api:
+    <<: *python-build
+    command: ["uvicorn", "auth_api.main:app", "--host", "0.0.0.0", "--port", "8002", "--proxy-headers"]
+    environment:
+      <<: *common-env
+      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/auth
+    ports: ["8002:8002"]
+    depends_on:
+      valkey: {condition: service_healthy}
+      migrate-auth: {condition: service_completed_successfully}
+
+  backoffice-api:
+    <<: *python-build
+    command: ["uvicorn", "backoffice_api.main:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers"]
+    environment:
+      <<: *common-env
+      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
+    ports: ["8001:8001"]
+    depends_on:
+      valkey: {condition: service_healthy}
+      migrate-backoffice: {condition: service_completed_successfully}
+
+  orders-api:
+    <<: *python-build
+    command: ["uvicorn", "orders_api.main:app", "--host", "0.0.0.0", "--port", "8003", "--proxy-headers"]
+    environment:
+      <<: *common-env
+      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
+    ports: ["8003:8003"]
+    depends_on:
+      valkey: {condition: service_healthy}
+      migrate-orders: {condition: service_completed_successfully}
+
+  webshop-api:
+    <<: *python-build
+    command: ["uvicorn", "webshop_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+    environment:
+      <<: *common-env
+      ORDERS_API_URL: http://orders-api:8003
+    ports: ["8000:8000"]
+    depends_on:
+      valkey: {condition: service_healthy}
+      orders-api: {condition: service_started}
+
+  # --- Worker / scheduler / monitoring -----------------------------------
+  worker:
+    <<: *python-build
+    command: ["celery", "-A", "worker.celery_app", "worker", "-l", "info", "--concurrency=2"]
+    environment:
+      <<: *common-env
+      BACKOFFICE_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
+      ORDERS_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
+    depends_on:
+      valkey: {condition: service_healthy}
+      migrate-backoffice: {condition: service_completed_successfully}
+      migrate-orders: {condition: service_completed_successfully}
+
+  beat:
+    <<: *python-build
+    command: ["celery", "-A", "worker.celery_app", "beat", "-l", "info"]
+    environment:
+      <<: *common-env
+      BACKOFFICE_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
+      ORDERS_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
+    depends_on:
+      valkey: {condition: service_healthy}
+
+  flower:
+    <<: *python-build
+    command: ["celery", "-A", "worker.celery_app", "flower", "--port=5555"]
+    environment:
+      <<: *common-env
+      BACKOFFICE_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
+      ORDERS_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
+    ports: ["5555:5555"]
+    depends_on:
+      valkey: {condition: service_healthy}
+
+  # --- Frontend ----------------------------------------------------------
+  webshop-ui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ui
+    image: commerce-platform-ui:local
+    ports: ["5173:80"]
+    depends_on:
+      webshop-api: {condition: service_started}
 
 volumes:
   pgdata:

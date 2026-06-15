@@ -1,0 +1,31 @@
+# dev — local minikube. Postgres + Valkey run in-cluster; images are built
+# locally and loaded into minikube (see deploy/dev/minikube-up.sh), so we never
+# pull from a registry. Single replicas, Flower on, tracing off.
+global:
+  image:
+    pyRepository: commerce-platform-py
+    pyTag: local
+    uiRepository: commerce-platform-ui
+    uiTag: local
+    pullPolicy: IfNotPresent
+  jwtSecret: "dev-secret-change-me-in-production-0123456789"
+  otelEndpoint: ""
+
+# Convenience in-cluster dependencies are fine for local dev.
+postgres:
+  enabled: true
+valkey:
+  enabled: true
+
+migrations:
+  enabled: true
+
+services:
+  auth-api: {replicas: 1}
+  backoffice-api: {replicas: 1}
+  orders-api: {replicas: 1}
+  webshop-api: {replicas: 1}
+  worker: {replicas: 1}
+  beat: {replicas: 1}
+  flower: {enabled: true, replicas: 1}
+  webshop-ui: {replicas: 1}

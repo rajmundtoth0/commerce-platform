@@ -1,0 +1,27 @@
+# stg — auto-synced from main. Cluster to be provisioned later.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: commerce-platform-stg
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/commerce-platform.git
+    targetRevision: main
+    path: deploy/helm/commerce-platform
+    helm:
+      releaseName: commerce
+      valueFiles:
+        - values.yaml
+        - values-stg.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: commerce-stg
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=true, ApplyOutOfSyncOnly=true]
+    retry:
+      limit: 3
+      backoff: {duration: 10s, factor: 2, maxDuration: 2m}

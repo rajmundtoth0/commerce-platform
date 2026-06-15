@@ -1,97 +1,69 @@
-"""Test fixtures.
+"""Shared test setup for all services.
 
-Tests run fully self-contained — no Postgres or Redis required:
-  * Postgres  -> a temp-file SQLite database (async, via aiosqlite)
-  * Redis     -> fakeredis' async client
-
-This keeps `pytest` (and CI) hermetic while exercising the real services,
-projection writers, routers, and event wiring.
+Tests are hermetic: each service's Postgres is a temp-file SQLite database and
+Valkey is fakeredis (async + sync). Environment is configured before any service
+module is imported, since services build their Database/clients at import time.
 """
 
 from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import AsyncIterator
 
-# Configure the environment BEFORE importing any app module that reads settings.
-_DB_FD, _DB_PATH = tempfile.mkstemp(suffix=".db")
-os.close(_DB_FD)
+# --- Configure environment BEFORE importing any service module. -----------
+_DBS = {
+    name: tempfile.mkstemp(suffix=f"-{name}.db")[1] for name in ("auth", "orders", "backoffice")
+}
 os.environ.update(
     APP_ENV="test",
     LOG_LEVEL="WARNING",
-    POSTGRES_DSN=f"sqlite+aiosqlite:///{_DB_PATH}",
-    REDIS_URL="redis://localhost:6379/0",  # not used; fakeredis is injected
+    JWT_SECRET="test-secret-test-secret-test-secret-0123456789",
+    AUTH_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['auth']}",
+    ORDERS_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['orders']}",
+    BACKOFFICE_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['backoffice']}",
+    VALKEY_URL="redis://localhost:6379/0",
+    CELERY_BROKER_URL="memory://",
+    CELERY_RESULT_BACKEND="cache+memory://",
     OTEL_EXPORTER_OTLP_ENDPOINT="",
 )
 
+import fakeredis  # noqa: E402
 import fakeredis.aioredis  # noqa: E402
 import pytest_asyncio  # noqa: E402
-from app.bootstrap import wire_projections  # noqa: E402
-from app.core import redis as redis_module  # noqa: E402
-from app.core.config import get_settings  # noqa: E402
-from app.core.database import dispose_engine, get_engine, get_sessionmaker  # noqa: E402
-from app.models import Base  # noqa: E402
-from app.shared.events import get_event_bus, reset_event_bus  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
-get_settings.cache_clear()
+from cplatform import valkey as valkey_module  # noqa: E402
+
+VALKEY_URL = "redis://localhost:6379/0"
+
+# A single shared fake Valkey backs both async and sync views in tests.
+_fake_server = fakeredis.FakeServer()
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _schema() -> AsyncIterator[None]:
-    """Fresh schema + fresh fake Redis + fresh event wiring per test."""
-    engine = get_engine()
-    async with engine.begin() as conn:
+async def _valkey() -> None:
+    """Fresh fake Valkey (async + sync) per test, sharing one keyspace."""
+    async_client = fakeredis.aioredis.FakeRedis(server=_fake_server, decode_responses=True)
+    sync_client = fakeredis.FakeRedis(server=_fake_server, decode_responses=True)
+    valkey_module.set_async_valkey(VALKEY_URL, async_client)
+    valkey_module.set_sync_valkey(VALKEY_URL, sync_client)
+    sync_client.flushall()
+    yield
+    await async_client.flushall()
+
+
+@pytest_asyncio.fixture
+async def auth_client() -> AsyncClient:
+    from auth_api.deps import database
+    from auth_api.main import app
+    from auth_api.models import Base
+
+    async with database.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-    fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    redis_module.set_redis(fake)
-
-    reset_event_bus()
-    wire_projections(get_event_bus(), fake)
-
-    yield
-
-    await fake.flushall()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-
-@pytest_asyncio.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    """HTTP client bound to the ASGI app (no network)."""
-    from app.main import app
-
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-
-
-@pytest_asyncio.fixture
-async def session() -> AsyncIterator[AsyncSession]:
-    """A standalone session for service/projection unit tests.
-
-    Tests that need data persisted call ``await session.commit()`` themselves;
-    teardown only closes the session (the context manager rolls back any
-    in-flight transaction), so an expected IntegrityError mid-test doesn't turn
-    into a teardown error.
-    """
-    async with get_sessionmaker()() as s:
-        yield s
-
-
-@pytest_asyncio.fixture
-async def redis() -> fakeredis.aioredis.FakeRedis:
-    return redis_module.get_redis()
-
-
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def _cleanup_engine() -> AsyncIterator[None]:
-    yield
-    await dispose_engine()
-    try:
-        os.unlink(_DB_PATH)
-    except OSError:
-        pass
+    async with AsyncClient(transport=transport, base_url="http://auth") as client:
+        # trigger lifespan (seed admin) manually for ASGITransport
+        async with app.router.lifespan_context(app):
+            yield client
+    async with database.engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)

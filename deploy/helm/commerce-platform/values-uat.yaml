@@ -1,0 +1,41 @@
+# uat — real cluster (to be provisioned). Managed Postgres + Valkey (in-cluster
+# deps disabled); secrets supplied out-of-band; tracing on. Modest replicas.
+#
+# Placeholders to fill once the cluster exists:
+#   - global.postgres.host / global.valkey.* : managed endpoints
+#   - existingSecret names                    : pre-created Secrets
+global:
+  image:
+    pyRepository: ghcr.io/your-org/commerce-platform-py
+    pyTag: uat
+    uiRepository: ghcr.io/your-org/commerce-platform-ui
+    uiTag: uat
+    pullPolicy: IfNotPresent
+  jwtExistingSecret: commerce-jwt
+  postgres:
+    host: postgres.commerce-uat.svc.cluster.local
+    existingSecret: commerce-postgres
+  valkey:
+    url: redis://valkey.commerce-uat.svc.cluster.local:6379/0
+    brokerUrl: redis://valkey.commerce-uat.svc.cluster.local:6379/1
+    resultBackend: redis://valkey.commerce-uat.svc.cluster.local:6379/2
+  otelEndpoint: http://otel-collector.observability:4317
+
+# Use managed Postgres/Valkey, not the in-cluster demo deployments.
+postgres:
+  enabled: false
+valkey:
+  enabled: false
+
+migrations:
+  enabled: true
+
+services:
+  auth-api: {replicas: 1}
+  backoffice-api: {replicas: 1}
+  orders-api: {replicas: 2}
+  webshop-api: {replicas: 2}
+  worker: {replicas: 1}
+  beat: {replicas: 1}
+  flower: {enabled: true, replicas: 1}
+  webshop-ui: {replicas: 1}

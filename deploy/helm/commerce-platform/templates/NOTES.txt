@@ -1,16 +1,21 @@
-commerce-platform {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}".
+commerce-platform {{ .Chart.AppVersion }} — release "{{ .Release.Name }}" in {{ .Release.Namespace }}.
 
-Image:     {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
-Replicas:  {{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} (HPA){{ else }}{{ .Values.replicaCount }}{{ end }}
-{{ if .Values.migrations.enabled }}Alembic migrations ran as a pre-upgrade Job.{{ else }}Migrations Job is DISABLED — run `commerce migrate` yourself.{{ end }}
+Deployed services:
+{{- range $name, $svc := .Values.services }}
+{{- if dig "enabled" true $svc }}
+  - {{ $name }} ({{ $svc.type }}{{ if $svc.port }}, port {{ $svc.port }}{{ end }}, replicas {{ default 1 $svc.replicas }})
+{{- end }}
+{{- end }}
 
-Check rollout:
-  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "commerce-platform.fullname" . }}
+{{ if .Values.migrations.enabled }}Alembic migrations for auth/orders/backoffice ran as a pre-upgrade Job.{{ else }}Migrations Job DISABLED.{{ end }}
 
-Port-forward and probe:
-  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "commerce-platform.fullname" . }} 8000:{{ .Values.service.port }}
-  curl localhost:8000/health
-  curl localhost:8000/metrics
+Port-forward the storefront BFF and UI:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/webshop-api 8000:8000
+  kubectl -n {{ .Release.Namespace }} port-forward svc/webshop-ui 5173:80
 
-Rebuild Redis projections from Postgres (read model is disposable):
-  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "commerce-platform.fullname" . }} -- commerce rebuild
+Trigger a full projection rebuild (worker reads Postgres -> Valkey):
+  kubectl -n {{ .Release.Namespace }} exec deploy/backoffice-api -- \
+    python -c "from backoffice_api.tasks import enqueue_rebuild_all; enqueue_rebuild_all()"
+
+NOTE: in-cluster postgres/valkey are for demos only (postgres.enabled / valkey.enabled).
+Point global.postgres / global.valkey at managed instances for production.

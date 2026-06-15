@@ -1,0 +1,26 @@
+# dev — local minikube. Optional: most local work uses deploy/dev/minikube-up.sh
+# (plain Helm). This Application lets you run dev under Argo CD if it's installed
+# in the minikube cluster. Images must be loaded into minikube first.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: commerce-platform-dev
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/commerce-platform.git
+    targetRevision: main
+    path: deploy/helm/commerce-platform
+    helm:
+      releaseName: commerce
+      valueFiles:
+        - values.yaml
+        - values-dev.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: commerce-dev
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=true, ApplyOutOfSyncOnly=true]

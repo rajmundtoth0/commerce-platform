@@ -1,7 +1,6 @@
 .git
 .github
 .venv
-venv
 **/__pycache__
 *.pyc
 .pytest_cache
@@ -10,10 +9,13 @@ venv
 .coverage
 htmlcov
 coverage.xml
-tests
-deploy
 *.db
 *.sqlite3
 .env
 .env.*
 !.env.example
+# Node / UI build artifacts (the UI image installs + builds fresh)
+apps/webshop-ui/node_modules
+apps/webshop-ui/dist
+**/*.tsbuildinfo
+deploy

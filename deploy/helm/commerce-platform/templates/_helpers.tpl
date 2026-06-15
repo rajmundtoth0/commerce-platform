@@ -1,60 +1,64 @@
-{{/* Expand the name of the chart. */}}
-{{- define "commerce-platform.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- define "cp.fullname" -}}
+{{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/* Fully qualified app name. */}}
-{{- define "commerce-platform.fullname" -}}
-{{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- $name := default .Chart.Name .Values.nameOverride }}
-{{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
-{{- end }}
-{{- end }}
-{{- end }}
-
-{{- define "commerce-platform.chart" -}}
-{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{- define "commerce-platform.labels" -}}
-helm.sh/chart: {{ include "commerce-platform.chart" . }}
-{{ include "commerce-platform.selectorLabels" . }}
-app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-{{- define "commerce-platform.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "commerce-platform.name" . }}
+{{- define "cp.labels" -}}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/part-of: commerce-platform
 {{- end }}
 
-{{- define "commerce-platform.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "commerce-platform.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
+{{- define "cp.jwtSecretName" -}}
+{{- if .Values.global.jwtExistingSecret }}{{ .Values.global.jwtExistingSecret }}{{ else }}{{ .Release.Name }}-jwt{{ end }}
 {{- end }}
 
-{{/* Name of the secret that holds the Postgres password. */}}
-{{- define "commerce-platform.secretName" -}}
-{{- if .Values.postgres.existingSecret }}
-{{- .Values.postgres.existingSecret }}
-{{- else }}
-{{- include "commerce-platform.fullname" . }}
-{{- end }}
+{{- define "cp.pgSecretName" -}}
+{{- if .Values.global.postgres.existingSecret }}{{ .Values.global.postgres.existingSecret }}{{ else }}{{ .Release.Name }}-postgres{{ end }}
 {{- end }}
 
-{{/* Assembled Postgres DSN when an explicit one is not provided. */}}
-{{- define "commerce-platform.postgresDsn" -}}
-{{- if .Values.postgres.dsn }}
-{{- .Values.postgres.dsn }}
-{{- else }}
-{{- printf "postgresql+asyncpg://%s:$(POSTGRES_PASSWORD)@%s:%v/%s" .Values.postgres.user .Values.postgres.host .Values.postgres.port .Values.postgres.database }}
+{{/* Assemble a Postgres DSN for a given database name. Password comes from env
+     POSTGRES_PASSWORD via Kubernetes dependent-variable expansion. */}}
+{{- define "cp.dsn" -}}
+{{- $db := index . 0 -}}{{- $root := index . 1 -}}
+{{- printf "postgresql+asyncpg://%s:$(POSTGRES_PASSWORD)@%s:%v/%s" $root.Values.global.postgres.user $root.Values.global.postgres.host $root.Values.global.postgres.port $db -}}
+{{- end }}
+
+{{/* Shared env for every Python service. `svc` is the service config dict, root is . */}}
+{{- define "cp.env" -}}
+{{- $svc := index . 0 -}}{{- $root := index . 1 -}}
+- name: APP_ENV
+  value: production
+- name: LOG_LEVEL
+  value: INFO
+- name: JWT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cp.jwtSecretName" $root }}
+      key: JWT_SECRET
+- name: VALKEY_URL
+  value: {{ $root.Values.global.valkey.url | quote }}
+- name: CELERY_BROKER_URL
+  value: {{ $root.Values.global.valkey.brokerUrl | quote }}
+- name: CELERY_RESULT_BACKEND
+  value: {{ $root.Values.global.valkey.resultBackend | quote }}
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ $root.Values.global.otelEndpoint | quote }}
+- name: POSTGRES_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cp.pgSecretName" $root }}
+      key: {{ $root.Values.global.postgres.existingSecretPasswordKey }}
+{{- if $svc.db }}
+- name: POSTGRES_DSN
+  value: {{ include "cp.dsn" (list $svc.db $root) | quote }}
+{{- end }}
+{{- range $envName, $db := $svc.dbEnvs }}
+- name: {{ $envName }}
+  value: {{ include "cp.dsn" (list $db $root) | quote }}
+{{- end }}
+{{- range $k, $v := $svc.extraEnv }}
+- name: {{ $k }}
+  value: {{ $v | quote }}
 {{- end }}
 {{- end }}

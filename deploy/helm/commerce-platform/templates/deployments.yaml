@@ -1,0 +1,78 @@
+{{- $root := . -}}
+{{- range $name, $svc := .Values.services }}
+{{- if dig "enabled" true $svc }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cp.labels" $root | nindent 4 }}
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/component: {{ $svc.type }}
+spec:
+  replicas: {{ default 1 $svc.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ $root.Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+        app.kubernetes.io/instance: {{ $root.Release.Name }}
+        app.kubernetes.io/component: {{ $svc.type }}
+      annotations:
+        {{- if or (eq $svc.type "api") $svc.metricsPort }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: {{ (default $svc.port $svc.metricsPort) | quote }}
+        {{- end }}
+    spec:
+      securityContext:
+        {{- toYaml $root.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $name }}
+          {{- if eq $svc.type "ui" }}
+          image: "{{ $root.Values.global.image.uiRepository }}:{{ $root.Values.global.image.uiTag }}"
+          {{- else }}
+          image: "{{ $root.Values.global.image.pyRepository }}:{{ $root.Values.global.image.pyTag }}"
+          {{- end }}
+          imagePullPolicy: {{ $root.Values.global.image.pullPolicy }}
+          {{- if $svc.command }}
+          command: {{ toJson $svc.command }}
+          {{- end }}
+          securityContext:
+            {{- toYaml $root.Values.securityContext | nindent 12 }}
+          {{- if ne $svc.type "ui" }}
+          env:
+            {{- include "cp.env" (list $svc $root) | nindent 12 }}
+          {{- end }}
+          {{- if $svc.port }}
+          ports:
+            - name: http
+              containerPort: {{ $svc.port }}
+          {{- end }}
+          {{- if eq $svc.type "api" }}
+          livenessProbe:
+            httpGet: {path: {{ $root.Values.defaults.probes.liveness.path }}, port: http}
+            initialDelaySeconds: {{ $root.Values.defaults.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $root.Values.defaults.probes.liveness.periodSeconds }}
+            failureThreshold: {{ $root.Values.defaults.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet: {path: {{ $root.Values.defaults.probes.readiness.path }}, port: http}
+            initialDelaySeconds: {{ $root.Values.defaults.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $root.Values.defaults.probes.readiness.periodSeconds }}
+            failureThreshold: {{ $root.Values.defaults.probes.readiness.failureThreshold }}
+          {{- else if eq $svc.type "ui" }}
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 5
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 5
+          {{- end }}
+          resources:
+            {{- toYaml $root.Values.defaults.resources | nindent 12 }}
+{{- end }}
+{{- end }}

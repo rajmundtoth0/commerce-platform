@@ -1,0 +1,37 @@
+# stg — real cluster (to be provisioned). Mirrors uat (same shape, different
+# endpoints/namespace); staging is a production rehearsal, so it stays close to
+# prd's topology while remaining cheap.
+global:
+  image:
+    pyRepository: ghcr.io/your-org/commerce-platform-py
+    pyTag: stg
+    uiRepository: ghcr.io/your-org/commerce-platform-ui
+    uiTag: stg
+    pullPolicy: IfNotPresent
+  jwtExistingSecret: commerce-jwt
+  postgres:
+    host: postgres.commerce-stg.svc.cluster.local
+    existingSecret: commerce-postgres
+  valkey:
+    url: redis://valkey.commerce-stg.svc.cluster.local:6379/0
+    brokerUrl: redis://valkey.commerce-stg.svc.cluster.local:6379/1
+    resultBackend: redis://valkey.commerce-stg.svc.cluster.local:6379/2
+  otelEndpoint: http://otel-collector.observability:4317
+
+postgres:
+  enabled: false
+valkey:
+  enabled: false
+
+migrations:
+  enabled: true
+
+services:
+  auth-api: {replicas: 2}
+  backoffice-api: {replicas: 1}
+  orders-api: {replicas: 2}
+  webshop-api: {replicas: 2}
+  worker: {replicas: 2}
+  beat: {replicas: 1}
+  flower: {enabled: true, replicas: 1}
+  webshop-ui: {replicas: 2}

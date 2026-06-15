@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+# One image for every Python service (auth-api, orders-api, backoffice-api,
+# webshop-api, worker, beat, flower). They differ only by the command they run
+# and the env they receive — the boundaries are at runtime, not in the image.
+
+FROM python:3.12-slim AS builder
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    VIRTUAL_ENV=/opt/venv PATH="/opt/venv/bin:$PATH"
+WORKDIR /src
+RUN python -m venv "$VIRTUAL_ENV"
+# Copy the sources needed to build/install the single distribution.
+COPY pyproject.toml README.md ./
+COPY libs ./libs
+COPY apps ./apps
+RUN pip install --upgrade pip && pip install .
+
+FROM python:3.12-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/opt/venv PATH="/opt/venv/bin:$PATH" APP_ENV=production
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 appuser
+WORKDIR /app
+COPY --from=builder /opt/venv /opt/venv
+# The source tree is needed at runtime for Alembic (migrations live outside the
+# importable packages) and to run alembic per service.
+COPY libs ./libs
+COPY apps ./apps
+COPY pyproject.toml README.md ./
+USER appuser
+EXPOSE 8000 8001 8002 8003 5555 9100
+# Command is supplied by docker-compose / Helm per role.
+CMD ["uvicorn", "webshop_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

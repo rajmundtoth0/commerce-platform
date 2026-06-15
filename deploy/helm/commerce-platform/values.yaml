@@ -1,103 +1,119 @@
-# Default values for commerce-platform.
+# commerce-platform Helm values.
+#
+# One chart deploys every service. The `services` map is the source of truth for
+# what gets deployed; each entry renders a Deployment (+ Service if it exposes a
+# port). Postgres and Valkey can be deployed in-cluster for demos or pointed at
+# managed instances via `global.postgres` / `global.valkey`.
 
-replicaCount: 2
+global:
+  image:
+    # Python services share one image; the UI has its own.
+    pyRepository: ghcr.io/your-org/commerce-platform-py
+    pyTag: "0.2.0"
+    uiRepository: ghcr.io/your-org/commerce-platform-ui
+    uiTag: "0.2.0"
+    pullPolicy: IfNotPresent
+  # Shared JWT secret (auth-api issues, everyone verifies). Use existingSecret in prod.
+  jwtSecret: "dev-secret-change-me-in-production-0123456789"
+  jwtExistingSecret: "" # name of a Secret with key JWT_SECRET
+  valkey:
+    url: redis://valkey:6379/0
+    brokerUrl: redis://valkey:6379/1
+    resultBackend: redis://valkey:6379/2
+  postgres:
+    host: postgres
+    port: 5432
+    user: commerce
+    password: commerce
+    existingSecret: "" # name of a Secret with key POSTGRES_PASSWORD
+    existingSecretPasswordKey: POSTGRES_PASSWORD
+  otelEndpoint: "" # e.g. http://otel-collector.observability:4317
 
-image:
-  repository: ghcr.io/your-org/commerce-platform
-  tag: "0.1.0" # overridden per release (GitOps bumps this)
-  pullPolicy: IfNotPresent
-
-imagePullSecrets: []
-nameOverride: ""
-fullnameOverride: ""
-
-serviceAccount:
-  create: true
-  name: ""
-
-# Non-secret application configuration -> ConfigMap.
-env:
-  APP_ENV: production
-  LOG_LEVEL: INFO
-  SERVICE_NAME: commerce-platform
-  OTEL_EXPORTER_OTLP_ENDPOINT: "" # e.g. http://otel-collector:4317
-  OTEL_TRACES_SAMPLER_ARG: "1.0"
-
-# Postgres connection (source of truth).
+# Convenience in-cluster dependencies (NOT production-grade — use a managed DB/Valkey in prod).
 postgres:
-  # If `dsn` is set it is used verbatim (async driver required).
-  dsn: ""
-  # Otherwise the DSN is assembled from these parts.
-  host: postgres
-  port: 5432
-  database: commerce
-  user: commerce
-  # Password handling: provide inline (dev) OR reference an existing Secret.
-  password: commerce
-  existingSecret: ""
-  existingSecretPasswordKey: password
+  enabled: true
+  image: postgres:16-alpine
+  storage: 1Gi
+  databases: [auth, orders, backoffice]
+valkey:
+  enabled: true
+  image: valkey/valkey:8-alpine
 
-# Redis connection (read projections).
-redis:
-  url: redis://redis:6379/0
-
-service:
-  type: ClusterIP
-  port: 80
-  targetPort: 8000
-
-# Container port the app listens on.
-containerPort: 8000
-
-# Run Alembic migrations as a pre-install/pre-upgrade Helm hook Job.
+# Run Alembic migrations for each owning database as a pre-install/upgrade Job.
 migrations:
   enabled: true
 
-resources:
-  requests:
-    cpu: 100m
-    memory: 128Mi
-  limits:
-    cpu: "1"
-    memory: 512Mi
+defaults:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+  probes:
+    liveness: {path: /health, initialDelaySeconds: 10, periodSeconds: 15, timeoutSeconds: 3, failureThreshold: 3}
+    readiness: {path: /ready, initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3}
 
-# Probes are wired to the app's liveness/readiness endpoints.
-probes:
-  liveness:
-    path: /health
-    initialDelaySeconds: 10
-    periodSeconds: 15
-    timeoutSeconds: 3
-    failureThreshold: 3
-  readiness:
-    path: /ready
-    initialDelaySeconds: 5
-    periodSeconds: 10
-    timeoutSeconds: 3
-    failureThreshold: 3
+services:
+  auth-api:
+    type: api
+    command: ["uvicorn", "auth_api.main:app", "--host", "0.0.0.0", "--port", "8002", "--proxy-headers"]
+    port: 8002
+    replicas: 2
+    db: auth # -> POSTGRES_DSN for the `auth` database
 
-# Prometheus scrape annotations on the pods (/metrics).
-metrics:
-  enabled: true
-  path: /metrics
+  backoffice-api:
+    type: api
+    command: ["uvicorn", "backoffice_api.main:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers"]
+    port: 8001
+    replicas: 1
+    db: backoffice
 
-podAnnotations: {}
+  orders-api:
+    type: api
+    command: ["uvicorn", "orders_api.main:app", "--host", "0.0.0.0", "--port", "8003", "--proxy-headers"]
+    port: 8003
+    replicas: 2
+    db: orders
+
+  webshop-api:
+    type: api
+    command: ["uvicorn", "webshop_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+    port: 8000
+    replicas: 2
+    extraEnv:
+      ORDERS_API_URL: http://orders-api:8003
+
+  worker:
+    type: worker
+    command: ["celery", "-A", "worker.celery_app", "worker", "-l", "info", "--concurrency=4"]
+    replicas: 2
+    metricsPort: 9100
+    dbEnvs:
+      BACKOFFICE_POSTGRES_DSN: backoffice
+      ORDERS_POSTGRES_DSN: orders
+
+  beat:
+    type: worker
+    command: ["celery", "-A", "worker.celery_app", "beat", "-l", "info"]
+    replicas: 1 # exactly one scheduler
+    dbEnvs:
+      BACKOFFICE_POSTGRES_DSN: backoffice
+      ORDERS_POSTGRES_DSN: orders
+
+  flower:
+    type: flower
+    command: ["celery", "-A", "worker.celery_app", "flower", "--port=5555"]
+    port: 5555
+    replicas: 1
+    enabled: true
+
+  webshop-ui:
+    type: ui
+    port: 80
+    replicas: 2
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 10001
-  fsGroup: 10001
 securityContext:
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
   capabilities:
     drop: ["ALL"]
-
-autoscaling:
-  enabled: false
-  minReplicas: 2
-  maxReplicas: 6
-  targetCPUUtilizationPercentage: 75
-
-nodeSelector: {}
-tolerations: []
-affinity: {}

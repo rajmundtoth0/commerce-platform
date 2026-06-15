@@ -29,3 +29,8 @@ coverage.xml
 # SQLite test artifacts
 *.db
 *.sqlite3
+
+# Node / Vite (webshop-ui)
+node_modules/
+dist/
+*.tsbuildinfo
