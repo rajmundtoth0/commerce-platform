@@ -1,23 +1,28 @@
-# stg — real cluster (to be provisioned). Mirrors uat (same shape, different
-# endpoints/namespace); staging is a production rehearsal, so it stays close to
-# prd's topology while remaining cheap.
+# stg — Scaleway (region fr-par). Managed PostgreSQL + Managed Redis (TLS),
+# images from Scaleway Container Registry, ingress via Scaleway LB + cert-manager.
+# Fill the <...> placeholders from the Terraform outputs (deploy/terraform/stg).
 global:
   image:
-    pyRepository: ghcr.io/your-org/commerce-platform-py
+    pyRepository: rg.fr-par.scw.cloud/<registry-namespace>/commerce-platform-py
     pyTag: stg
-    uiRepository: ghcr.io/your-org/commerce-platform-ui
+    uiRepository: rg.fr-par.scw.cloud/<registry-namespace>/commerce-platform-ui
     uiTag: stg
     pullPolicy: IfNotPresent
   jwtExistingSecret: commerce-jwt
   postgres:
-    host: postgres.commerce-stg.svc.cluster.local
+    host: <rdb-instance>.fr-par.scw.cloud # Managed PostgreSQL endpoint
+    port: 5432
+    user: commerce
     existingSecret: commerce-postgres
+    dsnParams: "?ssl=require" # Scaleway managed PG requires TLS
   valkey:
-    url: redis://valkey.commerce-stg.svc.cluster.local:6379/0
-    brokerUrl: redis://valkey.commerce-stg.svc.cluster.local:6379/1
-    resultBackend: redis://valkey.commerce-stg.svc.cluster.local:6379/2
-  otelEndpoint: http://otel-collector.observability:4317
+    # Managed Redis uses TLS -> rediss://, port 6379.
+    url: rediss://<redis-endpoint>.fr-par.scw.cloud:6379/0
+    brokerUrl: rediss://<redis-endpoint>.fr-par.scw.cloud:6379/1
+    resultBackend: rediss://<redis-endpoint>.fr-par.scw.cloud:6379/2
+  otelEndpoint: ""
 
+# Managed Postgres/Redis on Scaleway — no in-cluster demo deps.
 postgres:
   enabled: false
 valkey:
@@ -25,6 +30,20 @@ valkey:
 
 migrations:
   enabled: true
+
+# Expose the storefront + API through a Scaleway Load Balancer (ingress-nginx)
+# with Let's Encrypt TLS via cert-manager.
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    enabled: true
+    secretName: commerce-stg-tls
+  hosts:
+    - {host: shop.stg.example.com, service: webshop-ui, port: 8080}
+    - {host: api.stg.example.com, service: webshop-api, port: 8000}
 
 services:
   auth-api: {replicas: 2}
@@ -35,3 +54,10 @@ services:
   beat: {replicas: 1}
   flower: {enabled: true, replicas: 1}
   webshop-ui: {replicas: 2}
+
+# Centralized logging. Scaleway has no managed Elasticsearch, so run a
+# single-node ES (+Kibana) in-cluster for staging (size up or use ECK for prod).
+elk:
+  enabled: true
+  inCluster: true
+  indexPrefix: commerce-logs-stg

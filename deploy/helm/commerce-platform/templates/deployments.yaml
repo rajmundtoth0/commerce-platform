@@ -29,8 +29,12 @@ spec:
         prometheus.io/port: {{ (default $svc.port $svc.metricsPort) | quote }}
         {{- end }}
     spec:
+      # Don't inject legacy docker-link env vars (e.g. FLOWER_PORT) — they
+      # collide with apps that read same-named config from the environment.
+      enableServiceLinks: false
       securityContext:
-        {{- toYaml $root.Values.podSecurityContext | nindent 8 }}
+        runAsNonRoot: {{ $root.Values.podSecurityContext.runAsNonRoot }}
+        runAsUser: {{ $svc.runAsUser | default $root.Values.podSecurityContext.runAsUser }}
       containers:
         - name: {{ $name }}
           {{- if eq $svc.type "ui" }}

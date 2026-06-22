@@ -1,0 +1,116 @@
+{{- if and .Values.elk.enabled .Values.elk.filebeat.enabled }}
+{{- $esHost := ternary "elasticsearch" .Values.elk.elasticsearch.host .Values.elk.inCluster -}}
+{{- $esPort := ternary 9200 .Values.elk.elasticsearch.port .Values.elk.inCluster -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-filebeat
+  labels:
+    {{- include "cp.labels" . | nindent 4 }}
+data:
+  filebeat.yml: |
+    # Harvest only this release's namespace; decode the app's JSON; keep records
+    # that carry a `service` field (drops plain-text/uvicorn noise).
+    filebeat.autodiscover:
+      providers:
+        - type: kubernetes
+          node: ${NODE_NAME}
+          hints.enabled: false
+          templates:
+            - condition:
+                equals:
+                  kubernetes.namespace: {{ .Release.Namespace }}
+              config:
+                - type: container
+                  paths:
+                    - /var/log/containers/*-${data.kubernetes.container.id}.log
+    processors:
+      - add_kubernetes_metadata: {}
+      - decode_json_fields:
+          fields: ["message"]
+          target: ""
+          overwrite_keys: true
+          add_error_key: true
+      - drop_event:
+          when:
+            not:
+              has_fields: ["service"]
+    output.elasticsearch:
+      hosts: ["http://{{ $esHost }}:{{ $esPort }}"]
+      index: "{{ .Values.elk.indexPrefix }}-%{+yyyy.MM.dd}"
+    setup.template.enabled: false
+    setup.ilm.enabled: false
+    logging.level: info
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-filebeat
+  labels:
+    {{- include "cp.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-filebeat
+  labels:
+    {{- include "cp.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, pods, nodes]
+    verbs: [get, list, watch]
+  - apiGroups: ["apps"]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-filebeat
+  labels:
+    {{- include "cp.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-filebeat
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-filebeat
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Release.Name }}-filebeat
+  labels:
+    {{- include "cp.labels" . | nindent 4 }}
+    app.kubernetes.io/name: filebeat
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: filebeat, app.kubernetes.io/instance: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: filebeat, app.kubernetes.io/instance: {{ .Release.Name }}}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-filebeat
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: filebeat
+          image: {{ .Values.elk.filebeat.image }}
+          args: ["-e", "-strict.perms=false"]
+          securityContext:
+            runAsUser: 0
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          volumeMounts:
+            - {name: config, mountPath: /usr/share/filebeat/filebeat.yml, subPath: filebeat.yml, readOnly: true}
+            - {name: varlogcontainers, mountPath: /var/log/containers, readOnly: true}
+            - {name: varlogpods, mountPath: /var/log/pods, readOnly: true}
+            - {name: data, mountPath: /usr/share/filebeat/data}
+      volumes:
+        - {name: config, configMap: {name: {{ .Release.Name }}-filebeat, defaultMode: 0644}}
+        - {name: varlogcontainers, hostPath: {path: /var/log/containers}}
+        - {name: varlogpods, hostPath: {path: /var/log/pods}}
+        - {name: data, emptyDir: {}}
+{{- end }}

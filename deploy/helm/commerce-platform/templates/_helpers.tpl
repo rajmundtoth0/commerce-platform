@@ -21,7 +21,8 @@ app.kubernetes.io/part-of: commerce-platform
      POSTGRES_PASSWORD via Kubernetes dependent-variable expansion. */}}
 {{- define "cp.dsn" -}}
 {{- $db := index . 0 -}}{{- $root := index . 1 -}}
-{{- printf "postgresql+asyncpg://%s:$(POSTGRES_PASSWORD)@%s:%v/%s" $root.Values.global.postgres.user $root.Values.global.postgres.host $root.Values.global.postgres.port $db -}}
+{{- $params := $root.Values.global.postgres.dsnParams | default "" -}}
+{{- printf "postgresql+asyncpg://%s:$(POSTGRES_PASSWORD)@%s:%v/%s%s" $root.Values.global.postgres.user $root.Values.global.postgres.host $root.Values.global.postgres.port $db $params -}}
 {{- end }}
 
 {{/* Shared env for every Python service. `svc` is the service config dict, root is . */}}

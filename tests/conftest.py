@@ -21,7 +21,7 @@ os.environ.update(
     AUTH_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['auth']}",
     ORDERS_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['orders']}",
     BACKOFFICE_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['backoffice']}",
-    VALKEY_URL="redis://localhost:6379/0",
+    VALKEY_URL="redis://localhost:6380/0",
     CELERY_BROKER_URL="memory://",
     CELERY_RESULT_BACKEND="cache+memory://",
     OTEL_EXPORTER_OTLP_ENDPOINT="",
@@ -34,7 +34,7 @@ from httpx import ASGITransport, AsyncClient  # noqa: E402
 
 from cplatform import valkey as valkey_module  # noqa: E402
 
-VALKEY_URL = "redis://localhost:6379/0"
+VALKEY_URL = "redis://localhost:6380/0"
 
 # A single shared fake Valkey backs both async and sync views in tests.
 _fake_server = fakeredis.FakeServer()

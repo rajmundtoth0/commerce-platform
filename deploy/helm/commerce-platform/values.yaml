@@ -17,9 +17,9 @@ global:
   jwtSecret: "dev-secret-change-me-in-production-0123456789"
   jwtExistingSecret: "" # name of a Secret with key JWT_SECRET
   valkey:
-    url: redis://valkey:6379/0
-    brokerUrl: redis://valkey:6379/1
-    resultBackend: redis://valkey:6379/2
+    url: redis://valkey:6380/0
+    brokerUrl: redis://valkey:6380/1
+    resultBackend: redis://valkey:6380/2
   postgres:
     host: postgres
     port: 5432
@@ -27,6 +27,7 @@ global:
     password: commerce
     existingSecret: "" # name of a Secret with key POSTGRES_PASSWORD
     existingSecretPasswordKey: POSTGRES_PASSWORD
+    dsnParams: "" # appended to every DSN, e.g. "?ssl=require" for managed TLS
   otelEndpoint: "" # e.g. http://otel-collector.observability:4317
 
 # Convenience in-cluster dependencies (NOT production-grade — use a managed DB/Valkey in prod).
@@ -39,9 +40,45 @@ valkey:
   enabled: true
   image: valkey/valkey:8-alpine
 
+# Centralized logging: Filebeat (DaemonSet) ships the services' structured JSON
+# logs to Elasticsearch; explore in Kibana. Off by default.
+elk:
+  enabled: false
+  # inCluster: deploy a single-node Elasticsearch (+Kibana) in the cluster (demo).
+  # Set false to ship to a managed/external Elasticsearch (elasticsearch.host).
+  inCluster: false
+  indexPrefix: commerce-logs
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    host: elasticsearch # external host when inCluster=false
+    port: 9200
+    javaOpts: "-Xms512m -Xmx512m"
+  kibana:
+    enabled: true
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    port: 5601
+  filebeat:
+    enabled: true
+    image: docker.elastic.co/beats/filebeat:8.15.3
+
 # Run Alembic migrations for each owning database as a pre-install/upgrade Job.
 migrations:
   enabled: true
+
+# External access. Off by default (local/kind use port-forward); enabled per env
+# for cloud clusters. Each host routes to a service:port (e.g. UI + API).
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  tls:
+    enabled: true
+    secretName: "" # defaults to <release>-tls
+  hosts: []
+  # Example (set in an env overlay):
+  # hosts:
+  #   - {host: shop.stg.example.com, service: webshop-ui, port: 8080}
+  #   - {host: api.stg.example.com, service: webshop-api, port: 8000}
 
 defaults:
   resources:
@@ -92,7 +129,10 @@ services:
 
   beat:
     type: worker
-    command: ["celery", "-A", "worker.celery_app", "beat", "-l", "info"]
+    # Schedule + pidfile go to /tmp (the container runs as a non-root user that
+    # can't write the working directory).
+    command: ["celery", "-A", "worker.celery_app", "beat", "-l", "info",
+              "--schedule=/tmp/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
     replicas: 1 # exactly one scheduler
     dbEnvs:
       BACKOFFICE_POSTGRES_DSN: backoffice
@@ -107,7 +147,8 @@ services:
 
   webshop-ui:
     type: ui
-    port: 80
+    port: 8080 # nginx-unprivileged listens on 8080
+    runAsUser: 101 # the nginx-unprivileged image's user (owns its cache dirs)
     replicas: 2
 
 podSecurityContext:

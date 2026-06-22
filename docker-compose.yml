@@ -20,9 +20,9 @@ x-common-env: &common-env
   APP_ENV: local
   LOG_LEVEL: INFO
   JWT_SECRET: dev-secret-change-me-in-production-0123456789
-  VALKEY_URL: redis://valkey:6379/0
-  CELERY_BROKER_URL: redis://valkey:6379/1
-  CELERY_RESULT_BACKEND: redis://valkey:6379/2
+  VALKEY_URL: redis://valkey:6380/0
+  CELERY_BROKER_URL: redis://valkey:6380/1
+  CELERY_RESULT_BACKEND: redis://valkey:6380/2
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
 
 services:
@@ -46,11 +46,11 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
-    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    command: ["valkey-server", "--port", "6380", "--save", "", "--appendonly", "no"]
     ports:
-      - "6379:6379"
+      - "6380:6380"
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
+      test: ["CMD", "valkey-cli", "-p", "6380", "ping"]
       interval: 5s
       timeout: 3s
       retries: 15
@@ -58,7 +58,7 @@ services:
   # --- One-shot migrations (one per owning database) ---------------------
   migrate-auth:
     <<: *python-build
-    command: ["sh", "-c", "cd apps/auth-api && alembic upgrade head"]
+    command: ["sh", "-c", "cd apps/auth-api && alembic upgrade head && python -m auth_api.seed"]
     environment:
       <<: *common-env
       POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/auth
@@ -143,7 +143,7 @@ services:
 
   beat:
     <<: *python-build
-    command: ["celery", "-A", "worker.celery_app", "beat", "-l", "info"]
+    command: ["celery", "-A", "worker.celery_app", "beat", "-l", "info", "--schedule=/tmp/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
     environment:
       <<: *common-env
       BACKOFFICE_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
@@ -168,9 +168,51 @@ services:
       context: .
       dockerfile: docker/Dockerfile.ui
     image: commerce-platform-ui:local
-    ports: ["5173:80"]
+    ports: ["5173:8080"]
     depends_on:
       webshop-api: {condition: service_started}
 
+  # --- ELK (opt-in: `docker compose --profile elk up`) -------------------
+  # Ships the services' structured JSON logs to Elasticsearch; explore in Kibana.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    profiles: ["elk"]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    # Host port 9201 (9200 is commonly taken); container/internal stays 9200.
+    ports: ["9201:9200"]
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -qE '(green|yellow)'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    profiles: ["elk"]
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    # Host port 5602 (5601 is commonly taken); container/internal stays 5601.
+    ports: ["5602:5601"]
+    depends_on:
+      elasticsearch: {condition: service_healthy}
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.15.3
+    profiles: ["elk"]
+    user: root
+    command: ["filebeat", "-e", "-strict.perms=false"]
+    volumes:
+      - ./infra/elk/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      elasticsearch: {condition: service_healthy}
+
 volumes:
   pgdata:
+  esdata:

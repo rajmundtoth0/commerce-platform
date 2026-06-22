@@ -169,6 +169,11 @@ services + worker + beat + flower + UI.
 | http://localhost:8002/docs | auth-api |
 | http://localhost:8003/docs | orders-api |
 | http://localhost:5555 | Flower |
+| http://localhost:5602 | Kibana (only with `--profile elk`) |
+
+> Centralized logging is opt-in to keep normal runs light. Start it with
+> `docker compose --profile elk up -d` (adds Elasticsearch on host `:9201`,
+> Kibana on `:5602`, and a Filebeat shipper). See [Observability](#observability).
 
 A seed admin (`admin@example.com` / `admin12345`) is created by auth-api on
 startup. Quick tour:
@@ -237,6 +242,41 @@ Every service is observable from day one:
 - **Health**: `/health` (liveness) and `/ready` (probes Postgres/Valkey, returns
   503 when a dependency is down).
 
+### Centralized logging (ELK)
+
+The same structured JSON logs are shipped to **Elasticsearch** and explored in
+**Kibana**. The shipper is **Filebeat** — there is intentionally **no Logstash**:
+because the app already emits JSON, a Filebeat `decode_json_fields` step parses
+each line into top-level fields (`service`, `level`, `request_id`, `trace_id`,
+`domain`, `projection_key`, …), so search/filter/aggregate works out of the box.
+Only records carrying a `service` field are kept (plain-text/uvicorn noise is
+dropped).
+
+Architectural split (the part that matters): the **collector is always
+in-cluster** (a Filebeat DaemonSet, one per node), while the **storage tier**
+(Elasticsearch + Kibana) is in-cluster only for dev and **managed/external** for
+uat/stg/prd — heavy, stateful Elasticsearch shouldn't share a failure/resource
+domain with the app in production.
+
+| Env | Filebeat | Elasticsearch / Kibana | Index |
+| --- | --- | --- | --- |
+| **local (compose)** | container (autodiscover by image) | `elasticsearch`/`kibana` containers (`--profile elk`) | `commerce-logs-YYYY.MM.DD` |
+| **dev** | DaemonSet | in-cluster single-node (demo) | `commerce-logs-*` |
+| **uat/stg/prd** | DaemonSet | **managed** (`elk.elasticsearch.host` + Kibana off) | `commerce-logs-<env>-*` |
+
+```bash
+# Local: bring up logging alongside the stack
+docker compose --profile elk up -d
+open http://localhost:5602          # Kibana — create a data view "commerce-logs-*"
+curl 'localhost:9201/_cat/indices/commerce-logs-*?v'
+```
+
+In Kubernetes it's a Helm toggle (`elk.enabled`, off by default):
+`elk.inCluster=true` deploys a demo Elasticsearch+Kibana (dev); otherwise the
+Filebeat DaemonSet ships to `elk.elasticsearch.host` (per-env values). Because
+every log line carries `trace_id`, you can pivot log ↔ trace across Kibana and
+your OTel backend.
+
 ## CI/CD flow
 
 GitHub Actions (`.github/workflows/ci.yml`):
@@ -286,6 +326,11 @@ Four environments, each a base `values.yaml` + an environment overlay
 dev is wired to run **now**; uat/stg/prd render to valid manifests and are ready
 to point at clusters when they exist (fill the host/secret placeholders in their
 `values-<env>.yaml`).
+
+**stg on Scaleway** has a complete path: Terraform (`deploy/terraform/stg` —
+Kapsule + managed Postgres + managed Redis + Container Registry), a chart Ingress
+(Scaleway LB + cert-manager TLS), and TLS-ready DSNs. See the runbook:
+[docs/DEPLOY_SCALEWAY.md](docs/DEPLOY_SCALEWAY.md).
 
 **dev — local minikube (works today):**
 

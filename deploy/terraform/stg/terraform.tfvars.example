@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars and fill in. Credentials come from env vars:
+#   export SCW_ACCESS_KEY=...   SCW_SECRET_KEY=...
+project_id     = "11111111-2222-3333-4444-555555555555"
+region         = "fr-par"
+zone           = "fr-par-1"
+pg_password    = "change-me-strong"
+redis_password = "change-me-strong"

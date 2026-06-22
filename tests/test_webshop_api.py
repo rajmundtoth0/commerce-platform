@@ -18,7 +18,7 @@ from cplatform.valkey import get_sync_valkey
 
 pytestmark = pytest.mark.asyncio
 
-VALKEY_URL = "redis://localhost:6379/0"
+VALKEY_URL = "redis://localhost:6380/0"
 
 
 def _seed_product(pid: str, *, featured: bool, amount: int | None) -> None:

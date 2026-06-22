@@ -12,7 +12,7 @@ from cplatform.contracts import ORDER_SUMMARY_SPEC, PRODUCT_PRICE_SPEC, PRODUCT_
 from cplatform.valkey import get_sync_valkey
 
 pytestmark = pytest.mark.asyncio
-VALKEY_URL = "redis://localhost:6379/0"
+VALKEY_URL = "redis://localhost:6380/0"
 
 
 @pytest.fixture

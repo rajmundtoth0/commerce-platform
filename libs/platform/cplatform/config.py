@@ -33,9 +33,9 @@ class ServiceSettings(BaseSettings):
 
     # Valkey (Redis-compatible) — projections cache + Celery broker/backend.
     # Separate logical DBs keep projection data and task queues from colliding.
-    valkey_url: str = "redis://localhost:6379/0"
-    celery_broker_url: str = "redis://localhost:6379/1"
-    celery_result_backend: str = "redis://localhost:6379/2"
+    valkey_url: str = "redis://localhost:6380/0"
+    celery_broker_url: str = "redis://localhost:6380/1"
+    celery_result_backend: str = "redis://localhost:6380/2"
 
     # Auth — symmetric JWT shared across services (issued by auth-api).
     jwt_secret: str = "dev-insecure-change-me"

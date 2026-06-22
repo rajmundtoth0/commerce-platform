@@ -1,0 +1,44 @@
+# Filebeat (compose) — ships the platform's structured JSON logs to Elasticsearch.
+# No Logstash: the app already emits JSON, so decode_json_fields is all we need.
+#
+# Autodiscover restricts harvesting to OUR Python service containers (by image),
+# so we don't ingest Postgres/Valkey/ES/Kibana noise or create a feedback loop.
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      templates:
+        - condition:
+            contains:
+              docker.container.image: commerce-platform-py
+          config:
+            - type: container
+              paths:
+                - /var/lib/docker/containers/${data.docker.container.id}/*.log
+
+processors:
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+  # Parse the JSON log line (in `message`) into top-level fields: service, level,
+  # request_id, trace_id, task_id, domain, projection_key, projection_version, ...
+  - decode_json_fields:
+      fields: ["message"]
+      target: ""
+      overwrite_keys: true
+      add_error_key: true
+  # Keep only structured app logs (records that decoded a `service` field);
+  # drops uvicorn/plain-text noise. Remove this to also index access logs.
+  - drop_event:
+      when:
+        not:
+          has_fields: ["service"]
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  index: "commerce-logs-%{+yyyy.MM.dd}"
+
+# Let ES auto-create a plain dated index (no data streams / ILM / managed
+# template) — simplest reliable path for a custom index name on ES 8.
+setup.template.enabled: false
+setup.ilm.enabled: false
+
+logging.level: info

@@ -29,3 +29,8 @@ services:
   beat: {replicas: 1}
   flower: {enabled: true, replicas: 1}
   webshop-ui: {replicas: 1}
+
+# Centralized logging — in-cluster single-node ES + Kibana for local exploration.
+elk:
+  enabled: true
+  inCluster: true

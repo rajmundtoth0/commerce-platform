@@ -7,11 +7,15 @@ metadata:
   labels:
     {{- include "cp.labels" . | nindent 4 }}
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    # post-install/upgrade (not pre-): with in-cluster Postgres the database is
+    # created as part of THIS release, so migrations must run after resources
+    # exist. The job waits for Postgres to accept connections first, so it is
+    # correct for both in-cluster (dev) and pre-existing managed (uat/stg/prd) DBs.
+    "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "5"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
-  backoffLimit: 3
+  backoffLimit: 5
   ttlSecondsAfterFinished: 600
   template:
     metadata:
@@ -26,12 +30,18 @@ spec:
         - name: migrate
           image: "{{ .Values.global.image.pyRepository }}:{{ .Values.global.image.pyTag }}"
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
-          # Run Alembic for each owning database in turn.
+          # Wait for Postgres, then run Alembic for each owning database in turn.
           command: ["sh", "-c"]
           args:
             - |
               set -e
-              cd apps/auth-api && POSTGRES_DSN="{{ include "cp.dsn" (list "auth" $root) }}" alembic upgrade head && cd /app
+              echo "waiting for postgres at {{ .Values.global.postgres.host }}:{{ .Values.global.postgres.port }} ..."
+              until python -c "import psycopg; psycopg.connect(host='{{ .Values.global.postgres.host }}', port={{ .Values.global.postgres.port }}, user='{{ .Values.global.postgres.user }}', password='$POSTGRES_PASSWORD', dbname='postgres', connect_timeout=3).close()" 2>/dev/null; do
+                sleep 2
+              done
+              echo "postgres is up; running migrations"
+              cd apps/auth-api && POSTGRES_DSN="{{ include "cp.dsn" (list "auth" $root) }}" alembic upgrade head \
+                && POSTGRES_DSN="{{ include "cp.dsn" (list "auth" $root) }}" python -m auth_api.seed && cd /app
               cd apps/orders-api && POSTGRES_DSN="{{ include "cp.dsn" (list "orders" $root) }}" alembic upgrade head && cd /app
               cd apps/backoffice-api && POSTGRES_DSN="{{ include "cp.dsn" (list "backoffice" $root) }}" alembic upgrade head
           env:

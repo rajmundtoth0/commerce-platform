@@ -14,9 +14,9 @@ global:
     host: postgres.commerce-prd.svc.cluster.local
     existingSecret: commerce-postgres
   valkey:
-    url: redis://valkey.commerce-prd.svc.cluster.local:6379/0
-    brokerUrl: redis://valkey.commerce-prd.svc.cluster.local:6379/1
-    resultBackend: redis://valkey.commerce-prd.svc.cluster.local:6379/2
+    url: redis://valkey.commerce-prd.svc.cluster.local:6380/0
+    brokerUrl: redis://valkey.commerce-prd.svc.cluster.local:6380/1
+    resultBackend: redis://valkey.commerce-prd.svc.cluster.local:6380/2
   otelEndpoint: http://otel-collector.observability:4317
 
 postgres:
@@ -36,3 +36,15 @@ services:
   beat: {replicas: 1} # exactly one scheduler
   flower: {enabled: false}
   webshop-ui: {replicas: 3}
+
+# Centralized logging — ship to managed Elasticsearch (placeholder host); no
+# in-cluster ES/Kibana. Fill the host when the cluster/ES exists.
+elk:
+  enabled: true
+  inCluster: false
+  indexPrefix: commerce-logs-prd
+  elasticsearch:
+    host: elasticsearch.logging.svc.cluster.local
+    port: 9200
+  kibana:
+    enabled: false
