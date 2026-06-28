@@ -332,6 +332,13 @@ Kapsule + managed Postgres + managed Redis + Container Registry), a chart Ingres
 (Scaleway LB + cert-manager TLS), and TLS-ready DSNs. See the runbook:
 [docs/DEPLOY_SCALEWAY.md](docs/DEPLOY_SCALEWAY.md).
 
+**Secrets** use **Doppler** as the source of truth, delivered per-runtime:
+`doppler run` locally, and the **External Secrets Operator** (+ stakater/reloader
+for rotation) in Kubernetes — syncing into the same `existingSecret` the chart
+already reads, so it's backend-swappable (Doppler ↔ Scaleway SM ↔ Vault). Demo it
+locally with `WITH_ESO=1 DOPPLER_TOKEN=... ./deploy/dev/kind-up.sh`. See
+[docs/SECRETS.md](docs/SECRETS.md).
+
 **dev — local minikube (works today):**
 
 ```bash

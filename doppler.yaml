@@ -1,0 +1,9 @@
+# Doppler CLI project mapping for local development.
+#   doppler login
+#   doppler setup            # picks project + config from this file
+#   doppler run -- docker compose up      # injects JWT_SECRET, DSNs, VALKEY_URL...
+# Create the project in Doppler with configs: dev / uat / stg / prd, each holding
+# JWT_SECRET and POSTGRES_PASSWORD (plus any non-secret config you want centralized).
+setup:
+  project: commerce-platform
+  config: dev

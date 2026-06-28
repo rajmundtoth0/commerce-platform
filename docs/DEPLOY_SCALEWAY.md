@@ -61,17 +61,36 @@ kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/st
 Point DNS: create A records for `shop.stg.example.com` / `api.stg.example.com`
 at the ingress LoadBalancer's external IP (`kubectl -n ingress-nginx get svc`).
 
-## 3. Secrets (not in git)
+## 3. Secrets — Doppler + External Secrets Operator
+
+stg/prd use **ESO** (Doppler backend): the chart syncs `commerce-jwt` /
+`commerce-postgres` from Doppler. Full details in [docs/SECRETS.md](SECRETS.md).
 
 ```bash
+# operators (once per cluster)
+helm repo add external-secrets https://charts.external-secrets.io
+helm install external-secrets external-secrets/external-secrets \
+  -n external-secrets --create-namespace --set installCRDs=true
+helm repo add stakater https://stakater.github.io/stakater-charts
+helm install reloader stakater/reloader -n reloader --create-namespace
+
+# bootstrap "secret zero": the Doppler service token for the stg config
 kubectl create ns commerce-stg
-kubectl -n commerce-stg create secret generic commerce-jwt \
-  --from-literal=JWT_SECRET="$(openssl rand -hex 32)"
-kubectl -n commerce-stg create secret generic commerce-postgres \
-  --from-literal=POSTGRES_PASSWORD="<same pg_password as terraform>"
+kubectl -n commerce-stg create secret generic doppler-token \
+  --from-literal=dopplerToken=dp.st.stg.xxxxxxxx
 ```
-(For a cleaner setup, use Scaleway Secret Manager + the external-secrets operator,
-or sealed-secrets, instead of raw `kubectl create secret`.)
+Put `JWT_SECRET` and `POSTGRES_PASSWORD` (matching the Terraform `pg_password`) in
+the Doppler `stg` config — ESO materializes the k8s Secrets, and Reloader
+rolling-restarts pods when they rotate. `values-stg.yaml` already sets
+`externalSecrets.enabled` + `reloader.enabled`.
+
+> Quick alternative without Doppler: create the two Secrets directly —
+> `kubectl -n commerce-stg create secret generic commerce-jwt --from-literal=JWT_SECRET=...`
+> and `commerce-postgres --from-literal=POSTGRES_PASSWORD=...` — and set
+> `externalSecrets.enabled=false`.
+>
+> For full single-cloud/EU, swap ESO's `SecretStore` provider to Scaleway Secret
+> Manager — the ExternalSecrets and chart stay identical.
 
 ## 4. Wire `values-stg.yaml`
 

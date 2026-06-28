@@ -65,6 +65,32 @@ elk:
 migrations:
   enabled: true
 
+# External Secrets Operator (ESO): sync secrets from a backend (Doppler) into the
+# native k8s Secrets the chart already consumes via `existingSecret`. Off by
+# default; when enabled, set global.jwtExistingSecret / global.postgres.existingSecret
+# to the names below so the chart does NOT also create them.
+# Requires: ESO installed in-cluster + a bootstrap token Secret (tokenSecretName).
+externalSecrets:
+  enabled: false
+  provider: doppler
+  refreshInterval: 1h
+  tokenSecretName: doppler-token # bootstrap Secret holding the Doppler service token
+  tokenSecretKey: dopplerToken
+  # k8s Secrets to materialize (names must match the chart's existingSecret refs).
+  secrets:
+    - name: commerce-jwt
+      data:
+        - { secretKey: JWT_SECRET, remoteRef: JWT_SECRET }
+    - name: commerce-postgres
+      data:
+        - { secretKey: POSTGRES_PASSWORD, remoteRef: POSTGRES_PASSWORD }
+
+# stakater/reloader: rolling-restart workloads when their Secret changes (e.g. a
+# Doppler rotation synced by ESO). Adds reload annotations to the Deployments.
+# Requires the reloader controller installed in-cluster.
+reloader:
+  enabled: false
+
 # External access. Off by default (local/kind use port-forward); enabled per env
 # for cloud clusters. Each host routes to a service:port (e.g. UI + API).
 ingress:

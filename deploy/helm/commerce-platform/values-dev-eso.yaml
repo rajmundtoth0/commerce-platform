@@ -1,0 +1,20 @@
+# Local ESO + Reloader + Doppler demo overlay for kind.
+# Layer it ON TOP of values.yaml + values-dev.yaml:
+#   helm upgrade ... -f values.yaml -f values-dev.yaml -f values-dev-eso.yaml
+#
+# Prereqs (handled by `WITH_ESO=1 ./deploy/dev/kind-up.sh`):
+#   - External Secrets Operator + stakater/reloader installed in the cluster
+#   - a `doppler-token` Secret in the release namespace (the Doppler service token)
+#   - a Doppler config `dev` containing JWT_SECRET and POSTGRES_PASSWORD
+#
+# With this overlay the chart does NOT create the secrets itself — ESO does, from
+# Doppler — and the in-cluster Postgres uses that same synced password.
+global:
+  jwtExistingSecret: commerce-jwt
+  postgres:
+    existingSecret: commerce-postgres
+
+externalSecrets:
+  enabled: true
+reloader:
+  enabled: true

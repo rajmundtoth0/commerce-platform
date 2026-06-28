@@ -10,6 +10,11 @@ metadata:
     {{- include "cp.labels" $root | nindent 4 }}
     app.kubernetes.io/name: {{ $name }}
     app.kubernetes.io/component: {{ $svc.type }}
+  {{- if and $root.Values.reloader.enabled (ne $svc.type "ui") }}
+  annotations:
+    # Rolling-restart this workload when its Secrets change (ESO rotation).
+    secret.reloader.stakater.com/reload: "{{ include "cp.jwtSecretName" $root }},{{ include "cp.pgSecretName" $root }}"
+  {{- end }}
 spec:
   replicas: {{ default 1 $svc.replicas }}
   selector:

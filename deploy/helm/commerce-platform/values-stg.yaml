@@ -61,3 +61,9 @@ elk:
   enabled: true
   inCluster: true
   indexPrefix: commerce-logs-stg
+
+# Secrets via External Secrets Operator (Doppler backend) + auto-rollout on rotation.
+externalSecrets:
+  enabled: true
+reloader:
+  enabled: true
