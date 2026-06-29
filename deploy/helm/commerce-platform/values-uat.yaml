@@ -57,3 +57,5 @@ externalSecrets:
   enabled: true
 reloader:
   enabled: true
+opsStatus:
+  existingSecret: commerce-status

@@ -17,6 +17,10 @@ app.kubernetes.io/part-of: commerce-platform
 {{- if .Values.global.postgres.existingSecret }}{{ .Values.global.postgres.existingSecret }}{{ else }}{{ .Release.Name }}-postgres{{ end }}
 {{- end }}
 
+{{- define "cp.opsSecretName" -}}
+{{- if .Values.opsStatus.existingSecret }}{{ .Values.opsStatus.existingSecret }}{{ else }}{{ .Release.Name }}-status{{ end }}
+{{- end }}
+
 {{/* Assemble a Postgres DSN for a given database name. Password comes from env
      POSTGRES_PASSWORD via Kubernetes dependent-variable expansion. */}}
 {{- define "cp.dsn" -}}
@@ -61,5 +65,16 @@ app.kubernetes.io/part-of: commerce-platform
 {{- range $k, $v := $svc.extraEnv }}
 - name: {{ $k }}
   value: {{ $v | quote }}
+{{- end }}
+{{- if $svc.opsToken }}
+- name: OPS_STATUS_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cp.opsSecretName" $root }}
+      key: {{ $root.Values.opsStatus.tokenKey }}
+{{- if $root.Values.opsStatus.statusChecks }}
+- name: STATUS_CHECKS
+  value: {{ $root.Values.opsStatus.statusChecks | toJson | quote }}
+{{- end }}
 {{- end }}
 {{- end }}

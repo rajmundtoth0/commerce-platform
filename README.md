@@ -63,6 +63,7 @@ split into separate repos/pipelines would not change the runtime topology.
 | **backoffice-api** | products, prices (authoritative) | `backoffice` | — | Admin API (all writes admin-gated) + SQLAdmin UI at `/admin/db`. Enqueues product/price rebuilds; exposes projection metadata. |
 | **webshop-api** | nothing (BFF) | none | product, product-price, order-summary | Customer-facing. Cart in Valkey. Calls orders-api for checkout/status. |
 | **worker** | nothing (platform) | reads backoffice+orders | writes all | Celery worker: per-entity rebuilds, nightly full rebuild, stale-key cleanup. Beat schedules; Flower monitors. |
+| **status-api** | components, incidents, maintenance | `status` | — | Internal status page + ops API. Health collector; token-gated writes. See [docs/STATUS_PAGE.md](docs/STATUS_PAGE.md). |
 | **webshop-ui** | — | — | via webshop-api only | React + TS + Vite storefront. |
 
 **auth-api's role.** It is the only issuer of identity. Other services never
@@ -168,6 +169,7 @@ services + worker + beat + flower + UI.
 | http://localhost:8001/docs | backoffice-api (admin; SQLAdmin at `/admin/db`) |
 | http://localhost:8002/docs | auth-api |
 | http://localhost:8003/docs | orders-api |
+| http://localhost:8004 | status-api (internal status page; `/docs` for API) |
 | http://localhost:5555 | Flower |
 | http://localhost:5602 | Kibana (only with `--profile elk`) |
 
