@@ -11,7 +11,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/your-org/commerce-platform.git
-    targetRevision: main
+    targetRevision: master
     path: deploy/helm/commerce-platform
     helm:
       releaseName: commerce

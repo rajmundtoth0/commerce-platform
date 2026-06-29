@@ -1,4 +1,4 @@
-# uat — auto-synced from main. Cluster to be provisioned later.
+# uat — auto-synced from master. Cluster to be provisioned later.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -9,7 +9,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/your-org/commerce-platform.git
-    targetRevision: main
+    targetRevision: master
     path: deploy/helm/commerce-platform
     helm:
       releaseName: commerce

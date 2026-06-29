@@ -358,7 +358,7 @@ kubectl apply -n argocd -f deploy/argocd/uat.yaml   # or dev.yaml / stg.yaml / p
 ```
 
 Each Application points at the chart with `valueFiles: [values.yaml,
-values-<env>.yaml]`. dev/uat/stg auto-sync from `main`; **prd is manual and
+values-<env>.yaml]`. dev/uat/stg auto-sync from `master`; **prd is manual and
 pinned to an immutable git tag** so a human promotes releases.
 
 Flow: **push images → bump tag in the env overlay (or the prd Application's
