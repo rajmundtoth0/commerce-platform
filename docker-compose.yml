@@ -6,6 +6,7 @@
 #   backoffice http://localhost:8001/docs  (SQLAdmin at /admin/db)
 #   auth:      http://localhost:8002/docs
 #   orders:    http://localhost:8003/docs
+#   status:    http://localhost:8004/        (internal status page; /docs for API)
 #   flower:    http://localhost:5555
 #
 name: commerce-platform
@@ -46,7 +47,8 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
-    command: ["valkey-server", "--port", "6380", "--save", "", "--appendonly", "no"]
+    command:
+      ["valkey-server", "--port", "6380", "--save", "", "--appendonly", "no"]
     ports:
       - "6380:6380"
     healthcheck:
@@ -58,12 +60,17 @@ services:
   # --- One-shot migrations (one per owning database) ---------------------
   migrate-auth:
     <<: *python-build
-    command: ["sh", "-c", "cd apps/auth-api && alembic upgrade head && python -m auth_api.seed"]
+    command:
+      [
+        "sh",
+        "-c",
+        "cd apps/auth-api && alembic upgrade head && python -m auth_api.seed",
+      ]
     environment:
       <<: *common-env
       POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/auth
     depends_on:
-      postgres: {condition: service_healthy}
+      postgres: { condition: service_healthy }
 
   migrate-orders:
     <<: *python-build
@@ -72,7 +79,7 @@ services:
       <<: *common-env
       POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
     depends_on:
-      postgres: {condition: service_healthy}
+      postgres: { condition: service_healthy }
 
   migrate-backoffice:
     <<: *python-build
@@ -81,75 +88,152 @@ services:
       <<: *common-env
       POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
     depends_on:
-      postgres: {condition: service_healthy}
+      postgres: { condition: service_healthy }
+
+  migrate-status:
+    <<: *python-build
+    command: ["sh", "-c", "cd apps/status-api && alembic upgrade head"]
+    environment:
+      <<: *common-env
+      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/status
+    depends_on:
+      postgres: { condition: service_healthy }
 
   # --- Services ----------------------------------------------------------
   auth-api:
     <<: *python-build
-    command: ["uvicorn", "auth_api.main:app", "--host", "0.0.0.0", "--port", "8002", "--proxy-headers"]
+    command:
+      [
+        "uvicorn",
+        "auth_api.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8002",
+        "--proxy-headers",
+      ]
     environment:
       <<: *common-env
       POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/auth
     ports: ["8002:8002"]
     depends_on:
-      valkey: {condition: service_healthy}
-      migrate-auth: {condition: service_completed_successfully}
+      valkey: { condition: service_healthy }
+      migrate-auth: { condition: service_completed_successfully }
 
   backoffice-api:
     <<: *python-build
-    command: ["uvicorn", "backoffice_api.main:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers"]
+    command:
+      [
+        "uvicorn",
+        "backoffice_api.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8001",
+        "--proxy-headers",
+      ]
     environment:
       <<: *common-env
       POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
     ports: ["8001:8001"]
     depends_on:
-      valkey: {condition: service_healthy}
-      migrate-backoffice: {condition: service_completed_successfully}
+      valkey: { condition: service_healthy }
+      migrate-backoffice: { condition: service_completed_successfully }
 
   orders-api:
     <<: *python-build
-    command: ["uvicorn", "orders_api.main:app", "--host", "0.0.0.0", "--port", "8003", "--proxy-headers"]
+    command:
+      [
+        "uvicorn",
+        "orders_api.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8003",
+        "--proxy-headers",
+      ]
     environment:
       <<: *common-env
       POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
     ports: ["8003:8003"]
     depends_on:
-      valkey: {condition: service_healthy}
-      migrate-orders: {condition: service_completed_successfully}
+      valkey: { condition: service_healthy }
+      migrate-orders: { condition: service_completed_successfully }
 
   webshop-api:
     <<: *python-build
-    command: ["uvicorn", "webshop_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+    command:
+      [
+        "uvicorn",
+        "webshop_api.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--proxy-headers",
+      ]
     environment:
       <<: *common-env
       ORDERS_API_URL: http://orders-api:8003
     ports: ["8000:8000"]
     depends_on:
-      valkey: {condition: service_healthy}
-      orders-api: {condition: service_started}
+      valkey: { condition: service_healthy }
+      orders-api: { condition: service_started }
+
+  status-api:
+    <<: *python-build
+    command:
+      ["uvicorn", "status_api.main:app", "--host", "0.0.0.0", "--port", "8004", "--proxy-headers"]
+    environment:
+      <<: *common-env
+      POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/status
+      OPS_STATUS_TOKEN: dev-ops-token-change-me
+    ports: ["8004:8004"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate-status: { condition: service_completed_successfully }
 
   # --- Worker / scheduler / monitoring -----------------------------------
   worker:
     <<: *python-build
-    command: ["celery", "-A", "worker.celery_app", "worker", "-l", "info", "--concurrency=2"]
+    command:
+      [
+        "celery",
+        "-A",
+        "worker.celery_app",
+        "worker",
+        "-l",
+        "info",
+        "--concurrency=2",
+      ]
     environment:
       <<: *common-env
       BACKOFFICE_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
       ORDERS_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
     depends_on:
-      valkey: {condition: service_healthy}
-      migrate-backoffice: {condition: service_completed_successfully}
-      migrate-orders: {condition: service_completed_successfully}
+      valkey: { condition: service_healthy }
+      migrate-backoffice: { condition: service_completed_successfully }
+      migrate-orders: { condition: service_completed_successfully }
 
   beat:
     <<: *python-build
-    command: ["celery", "-A", "worker.celery_app", "beat", "-l", "info", "--schedule=/tmp/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
+    command:
+      [
+        "celery",
+        "-A",
+        "worker.celery_app",
+        "beat",
+        "-l",
+        "info",
+        "--schedule=/tmp/celerybeat-schedule",
+        "--pidfile=/tmp/celerybeat.pid",
+      ]
     environment:
       <<: *common-env
       BACKOFFICE_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/backoffice
       ORDERS_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
     depends_on:
-      valkey: {condition: service_healthy}
+      valkey: { condition: service_healthy }
 
   flower:
     <<: *python-build
@@ -160,7 +244,7 @@ services:
       ORDERS_POSTGRES_DSN: postgresql+asyncpg://commerce:commerce@postgres:5432/orders
     ports: ["5555:5555"]
     depends_on:
-      valkey: {condition: service_healthy}
+      valkey: { condition: service_healthy }
 
   # --- Frontend ----------------------------------------------------------
   webshop-ui:
@@ -170,13 +254,13 @@ services:
     image: commerce-platform-ui:local
     ports: ["5173:8080"]
     depends_on:
-      webshop-api: {condition: service_started}
+      webshop-api: { condition: service_started }
 
   # --- ELK (opt-in: `docker compose --profile elk up`) -------------------
   # Ships the services' structured JSON logs to Elasticsearch; explore in Kibana.
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
-    profiles: ["elk"]
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.2
+    # profiles: ["elk"]
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
@@ -186,24 +270,28 @@ services:
     volumes:
       - esdata:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -qE '(green|yellow)'"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s http://localhost:9200/_cluster/health | grep -qE '(green|yellow)'",
+        ]
       interval: 10s
       timeout: 5s
       retries: 30
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:8.15.3
-    profiles: ["elk"]
+    image: docker.elastic.co/kibana/kibana:9.4.2
+    # profiles: ["elk"]
     environment:
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
     # Host port 5602 (5601 is commonly taken); container/internal stays 5601.
     ports: ["5602:5601"]
     depends_on:
-      elasticsearch: {condition: service_healthy}
+      elasticsearch: { condition: service_healthy }
 
   filebeat:
-    image: docker.elastic.co/beats/filebeat:8.15.3
-    profiles: ["elk"]
+    image: docker.elastic.co/beats/filebeat:9.4.2
+    # profiles: ["elk"]
     user: root
     command: ["filebeat", "-e", "-strict.perms=false"]
     volumes:
@@ -211,7 +299,7 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
-      elasticsearch: {condition: service_healthy}
+      elasticsearch: { condition: service_healthy }
 
 volumes:
   pgdata:

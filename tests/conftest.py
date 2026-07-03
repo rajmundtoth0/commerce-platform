@@ -12,8 +12,10 @@ import tempfile
 
 # --- Configure environment BEFORE importing any service module. -----------
 _DBS = {
-    name: tempfile.mkstemp(suffix=f"-{name}.db")[1] for name in ("auth", "orders", "backoffice")
+    name: tempfile.mkstemp(suffix=f"-{name}.db")[1]
+    for name in ("auth", "orders", "backoffice", "status")
 }
+OPS_STATUS_TOKEN = "test-ops-token"
 os.environ.update(
     APP_ENV="test",
     LOG_LEVEL="WARNING",
@@ -21,6 +23,8 @@ os.environ.update(
     AUTH_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['auth']}",
     ORDERS_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['orders']}",
     BACKOFFICE_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['backoffice']}",
+    STATUS_POSTGRES_DSN=f"sqlite+aiosqlite:///{_DBS['status']}",
+    OPS_STATUS_TOKEN=OPS_STATUS_TOKEN,
     VALKEY_URL="redis://localhost:6380/0",
     CELERY_BROKER_URL="memory://",
     CELERY_RESULT_BACKEND="cache+memory://",

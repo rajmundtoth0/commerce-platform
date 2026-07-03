@@ -76,6 +76,7 @@ where = [
     "apps/backoffice-api",
     "apps/webshop-api",
     "apps/worker",
+    "apps/status-api",
 ]
 # alembic/ dirs are migration scripts, not importable packages.
 exclude = ["alembic", "alembic.*"]
@@ -98,6 +99,8 @@ ignore = ["B008"]
 "**/alembic/*" = ["E501"]
 # SQLAdmin ModelView config attributes are framework-declared class lists.
 "**/admin.py" = ["RUF012"]
+# page.py embeds an HTML/JS asset as a string literal (long lines, en-dash).
+"**/page.py" = ["E501", "RUF001"]
 
 # ---------------------------------------------------------------------------
 # mypy

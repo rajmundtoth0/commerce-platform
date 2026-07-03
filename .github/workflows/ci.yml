@@ -106,18 +106,23 @@ jobs:
           kind load docker-image commerce-platform-py:local --name commerce
           kind load docker-image commerce-platform-ui:local --name commerce
       - name: Helm install (dev values)
+        # ELK (in-cluster Elasticsearch+Kibana) is disabled for the smoke test —
+        # it's heavy/slow to become ready on a 2-CPU runner and isn't what this
+        # job verifies (chart deploys + service /health). ELK is exercised via
+        # docker compose --profile elk instead.
         run: |
           helm upgrade --install commerce deploy/helm/commerce-platform \
             --namespace commerce-dev --create-namespace \
             -f deploy/helm/commerce-platform/values.yaml \
             -f deploy/helm/commerce-platform/values-dev.yaml \
-            --wait --timeout 6m
+            --set elk.enabled=false \
+            --wait --timeout 8m
       - name: Smoke test /health across services
         run: |
           kubectl -n commerce-dev get pods
           kubectl -n commerce-dev run smoke --image=curlimages/curl:8.11.0 \
             --restart=Never -i --rm --quiet --command -- \
-            sh -ec 'for s in webshop-api:8000 auth-api:8002 orders-api:8003 backoffice-api:8001; do
+            sh -ec 'for s in webshop-api:8000 auth-api:8002 orders-api:8003 backoffice-api:8001 status-api:8004; do
               curl -fsS "http://${s%%:*}:${s##*:}/health" && echo " ok ${s}"; done'
       - name: Diagnostics on failure
         if: failure()
